@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Razítkovač</title>
+<style>
+  :root { --green: #3F6B1F; --bg: #eef0ec; --panel: #fff; --text: #222; --muted: #666; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header {
+    position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid #d5d8d0;
+  }
+  header h1 { margin: 0; font-size: 18px; color: var(--green); }
+  #hint { color: var(--muted); font-size: 14px; }
+  #fileName { color: var(--muted); font-size: 14px; flex: 1; min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #nameBox { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+  #nameLabel strong { color: var(--text); }
+  button {
+    font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--green);
+    background: var(--green); color: #fff; cursor: pointer;
+  }
+  button.secondary { background: #fff; color: var(--green); }
+  button.small { padding: 4px 10px; font-size: 13px; }
+  button:disabled { opacity: .45; cursor: default; }
+  #message { padding: 0 16px; }
+  #message:not(:empty) { margin: 12px auto; max-width: 900px; padding: 10px 14px; border-radius: 6px; background: #fbe9e7; color: #8a1c0c; }
+  #message.info:not(:empty) { background: #e8f2df; color: var(--green); }
+  #dropZone {
+    margin: 40px auto; max-width: 600px; padding: 60px 20px; text-align: center;
+    border: 2px dashed #9aa58e; border-radius: 12px; background: var(--panel); cursor: pointer;
+  }
+  #dropZone.over { border-color: var(--green); background: #f3f8ee; }
+  #dropZone p { margin: 6px 0; }
+  #dropZone .hint { color: var(--muted); font-size: 14px; }
+  #pages { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 16px; }
+  .page { position: relative; width: min(900px, 100%); background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.25); cursor: crosshair; overflow: hidden; }
+  .page img { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+  .page img.stamp { position: absolute; height: auto; pointer-events: none; }
+  .page img.ghost { opacity: .6; }
+  .num { font-size: 12px; color: var(--muted); margin-top: -12px; }
+  #nameModal {
+    position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.45); padding: 16px;
+  }
+  #nameModal form { width: min(420px, 100%); padding: 24px; border-radius: 12px; background: var(--panel); box-shadow: 0 8px 30px rgba(0,0,0,.3); }
+  #nameModal h2 { margin: 0 0 8px; font-size: 20px; color: var(--green); }
+  #nameModal p { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
+  #nameModal input { width: 100%; font: inherit; padding: 9px 10px; margin-bottom: 14px; border: 1px solid #b9bfb0; border-radius: 6px; }
+  #nameModal input:focus { outline: 2px solid var(--green); outline-offset: 0; }
+  #nameModal button { width: 100%; }
+  footer { padding: 24px 16px 16px; text-align: center; font-size: 12px; color: #9aa092; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Razítkovač</h1>
+  <span id="fileName"></span>
+  <span id="hint" class="hidden" data-i18n="hint"></span>
+  <div id="nameBox" class="hidden">
+    <span id="nameLabel"></span>
+    <button id="resetName" class="secondary small" type="button" data-i18n="resetName"></button>
+  </div>
+  <button id="openOther" class="secondary hidden" type="button" data-i18n="otherFile"></button>
+  <button id="stampBtn" class="hidden" type="button" disabled data-i18n="stampBtn"></button>
+</header>
+<div id="message" role="alert"></div>
+
+<div id="dropZone">
+  <p><strong data-i18n="dropTitle"></strong></p>
+  <p class="hint" data-i18n="dropHint"></p>
+  <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden>
+</div>
+
+<main id="pages"></main>
+
+<footer>Razítkovač v{{ version }} · vyvinul Petr Skřivánek s pomocí Claude Code</footer>
+
+<div id="nameModal" class="hidden">
+  <form id="nameForm">
+    <h2 data-i18n="nameTitle"></h2>
+    <p data-i18n="nameText"></p>
+    <input id="nameInput" type="text" maxlength="60" autocomplete="off" required>
+    <button type="submit" data-i18n="nameSave"></button>
+  </form>
+</div>
+
+<script>
+const TEXTS = {
+    hint: "Klikněte do stránky pro umístění razítka",
+    resetName: "Reset jména",
+    nameLabel: "Jméno na razítku:",
+    otherFile: "Jiný soubor",
+    stampBtn: "Razítkovat a stáhnout",
+    dropTitle: "Přetáhněte sem PDF",
+    dropHint: "nebo klikněte pro výběr souboru",
+    nameTitle: "Jak se jmenujete?",
+    nameText: "Jméno se zobrazí na razítku. Uloží se jen v tomto prohlížeči a kdykoli ho můžete resetovat.",
+    namePlaceholder: "Jméno a příjmení",
+    nameSave: "Uložit",
+    page: "Strana {n}",
+    done: "Hotovo, staženo: {name}",
+    err_no_file: "Nebyl vybrán žádný soubor.",
+    err_not_pdf: "Soubor není PDF.",
+    err_encrypted: "PDF je zašifrované (chráněné heslem). Odstraňte heslo a zkuste to znovu.",
+    err_corrupt: "PDF se nepodařilo otevřít, soubor je poškozený.",
+    err_no_pages: "PDF neobsahuje žádné stránky.",
+    err_too_large: "Soubor je příliš velký (limit {limit} MB).",
+    err_doc_gone: "Dokument už není k dispozici, nahrajte PDF znovu.",
+    err_bad_position: "Neplatná pozice razítka.",
+    err_bad_page: "Neplatná stránka.",
+    err_name_required: "Zadejte jméno na razítku.",
+    err_server: "Na serveru nastala chyba, zkuste to znovu.",
+    err_network: "Nepodařilo se spojit se serverem.",
+    err_unknown: "Něco se nepovedlo, zkuste to znovu.",
+};
+
+const dropZone = document.getElementById("dropZone");
+const fileInput = document.getElementById("fileInput");
+const pagesEl = document.getElementById("pages");
+const messageEl = document.getElementById("message");
+const fileNameEl = document.getElementById("fileName");
+const openOtherBtn = document.getElementById("openOther");
+const stampBtn = document.getElementById("stampBtn");
+const hintEl = document.getElementById("hint");
+const nameBox = document.getElementById("nameBox");
+const nameLabel = document.getElementById("nameLabel");
+const resetNameBtn = document.getElementById("resetName");
+const nameModal = document.getElementById("nameModal");
+const nameForm = document.getElementById("nameForm");
+const nameInput = document.getElementById("nameInput");
+
+// Stamp width relative to visual page width (7 cm on 21 cm A4), same rule as the server.
+const STAMP_WIDTH_FRACTION = 7 / 21;
+
+let docId = null;
+let fileName = "";
+let stampAspect = 5;
+let placement = null;  // {page, x, y} with x/y as fractions of the page size (stamp centre)
+let userName = "";
+let currentMessage = null;  // {kind, key, params} kept as a key so the text is built in one place
+
+// ---- persistent per-browser settings (name) ----
+function loadSetting(key) { try { return localStorage.getItem(key) || ""; } catch { return ""; } }
+function saveSetting(key, value) {
+  try { value ? localStorage.setItem(key, value) : localStorage.removeItem(key); } catch { /* ignore */ }
+}
+
+// ---- texts ----
+function t(key, params = {}) {
+  const text = TEXTS[key] ?? key;
+  return text.replace(/\{(\w+)\}/g, (_, k) => params[k] ?? "");
+}
+
+function renderMessage() {
+  if (!currentMessage) { messageEl.className = ""; messageEl.textContent = ""; return; }
+  messageEl.className = currentMessage.kind === "info" ? "info" : "";
+  messageEl.textContent = t(currentMessage.key, currentMessage.params);
+}
+function showError(key, params) { currentMessage = key ? { kind: "error", key, params } : null; renderMessage(); }
+function showInfo(key, params) { currentMessage = { kind: "info", key, params }; renderMessage(); }
+
+function errorKey(body) {
+  const key = `err_${body && body.code}`;
+  return TEXTS[key] ? key : "err_unknown";
+}
+
+function renderName() {
+  nameLabel.innerHTML = "";
+  nameLabel.append(t("nameLabel") + " ");
+  const strong = document.createElement("strong");
+  strong.textContent = userName;
+  nameLabel.append(strong);
+  nameBox.classList.toggle("hidden", !userName);
+}
+
+function applyTexts() {
+  document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+  nameInput.placeholder = t("namePlaceholder");
+  renderName();
+  renderMessage();
+}
+
+// ---- stamper name ----
+const ghost = makeStampImg("ghost");
+const placed = makeStampImg("placed");
+
+function makeStampImg(cls) {
+  const img = document.createElement("img");
+  img.className = `stamp ${cls}`;
+  img.alt = "";
+  return img;
+}
+
+function refreshStampImages() {
+  if (!userName) { ghost.removeAttribute("src"); placed.removeAttribute("src"); return; }
+  const src = `/api/stamp-preview.png?name=${encodeURIComponent(userName)}&t=${Date.now()}`;
+  ghost.src = src;
+  placed.src = src;
+}
+
+function askForName() {
+  nameInput.value = "";
+  nameModal.classList.remove("hidden");
+  nameInput.focus();
+}
+
+nameForm.addEventListener("submit", e => {
+  e.preventDefault();
+  const name = nameInput.value.replace(/\s+/g, " ").trim();
+  if (!name) return;
+  userName = name;
+  saveSetting("name", name);
+  nameModal.classList.add("hidden");
+  renderName();
+  refreshStampImages();
+});
+
+resetNameBtn.addEventListener("click", () => {
+  userName = "";
+  saveSetting("name", "");
+  renderName();
+  refreshStampImages();
+  askForName();
+});
+
+// ---- upload and preview ----
+dropZone.addEventListener("click", () => fileInput.click());
+openOtherBtn.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => {
+  if (fileInput.files.length) uploadFile(fileInput.files[0]);
+  fileInput.value = "";
+});
+
+["dragenter", "dragover"].forEach(ev => document.addEventListener(ev, e => {
+  e.preventDefault();
+  dropZone.classList.add("over");
+}));
+["dragleave", "drop"].forEach(ev => document.addEventListener(ev, e => {
+  e.preventDefault();
+  dropZone.classList.remove("over");
+}));
+document.addEventListener("drop", e => {
+  const file = e.dataTransfer.files[0];
+  if (file) uploadFile(file);
+});
+
+async function uploadFile(file) {
+  showError(null);
+  const form = new FormData();
+  form.append("file", file);
+  let res;
+  try {
+    res = await fetch("/api/upload", { method: "POST", body: form });
+  } catch {
+    showError("err_network");
+    return;
+  }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    showError(errorKey(body), body);
+    return;
+  }
+  docId = body.id;
+  fileName = file.name;
+  stampAspect = body.stampAspect;
+  placement = null;
+  fileNameEl.textContent = file.name;
+  refreshStampImages();
+  setLoaded(true);
+  renderPages(body.pages);
+}
+
+function setLoaded(loaded) {
+  dropZone.classList.toggle("hidden", loaded);
+  [openOtherBtn, stampBtn, hintEl].forEach(el => el.classList.toggle("hidden", !loaded));
+  stampBtn.disabled = true;
+  if (!loaded) {
+    pagesEl.innerHTML = "";
+    fileNameEl.textContent = "";
+    docId = null;
+  }
+}
+
+// Stamp centre for a pointer position, clamped so the stamp stays inside the page.
+function stampGeometry(pageEl, clientX, clientY) {
+  const r = pageEl.getBoundingClientRect();
+  let w = r.width * STAMP_WIDTH_FRACTION;
+  let h = w / stampAspect;
+  if (h > r.height) { h = r.height; w = h * stampAspect; }
+  const cx = Math.min(Math.max(clientX - r.left, w / 2), r.width - w / 2);
+  const cy = Math.min(Math.max(clientY - r.top, h / 2), r.height - h / 2);
+  return { x: cx / r.width, y: cy / r.height, w: w / r.width, h: h / r.height };
+}
+
+function positionStamp(img, pageEl, g) {
+  img.style.width = `${g.w * 100}%`;
+  img.style.left = `${(g.x - g.w / 2) * 100}%`;
+  img.style.top = `${(g.y - g.h / 2) * 100}%`;
+  if (img.parentElement !== pageEl) pageEl.append(img);
+}
+
+pagesEl.addEventListener("mousemove", e => {
+  const pageEl = e.target.closest(".page");
+  if (!pageEl) { ghost.remove(); return; }
+  positionStamp(ghost, pageEl, stampGeometry(pageEl, e.clientX, e.clientY));
+});
+pagesEl.addEventListener("mouseleave", () => ghost.remove());
+
+pagesEl.addEventListener("click", e => {
+  const pageEl = e.target.closest(".page");
+  if (!pageEl) return;
+  const g = stampGeometry(pageEl, e.clientX, e.clientY);
+  placement = { page: Number(pageEl.dataset.index), x: g.x, y: g.y };
+  positionStamp(placed, pageEl, g);
+  stampBtn.disabled = false;
+});
+
+stampBtn.addEventListener("click", async () => {
+  if (!placement) return;
+  if (!userName) { askForName(); return; }
+  stampBtn.disabled = true;
+  showError(null);
+  let res;
+  try {
+    res = await fetch("/api/stamp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: docId, name: userName, ...placement }),
+    });
+  } catch {
+    showError("err_network");
+    stampBtn.disabled = false;
+    return;
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    showError(errorKey(body), body);
+    stampBtn.disabled = false;
+    return;
+  }
+  const outName = fileName.replace(/\.pdf$/i, "") + "_approved.pdf";
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = outName;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  setLoaded(false);
+  showInfo("done", { name: outName });
+});
+
+function renderPages(pages) {
+  pagesEl.innerHTML = "";
+  pages.forEach((p, i) => {
+    const div = document.createElement("div");
+    div.className = "page";
+    div.dataset.index = i;
+    div.style.aspectRatio = `${p.w} / ${p.h}`;
+    const img = document.createElement("img");
+    img.loading = "lazy";
+    img.alt = t("page", { n: i + 1 });
+    img.src = `/api/page/${docId}/${i}.png`;
+    const num = document.createElement("div");
+    num.className = "num";
+    num.textContent = `${i + 1} / ${pages.length}`;
+    div.append(img);
+    pagesEl.append(div, num);
+  });
+}
+
+// ---- startup ----
+userName = loadSetting("name");
+applyTexts();
+if (userName) refreshStampImages(); else askForName();
+</script>
+</body>
+</html>
